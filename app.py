@@ -349,12 +349,14 @@ else:
 # =============================================================================
 # 6) FILTROS
 # =============================================================================
+df['c_tipo'] = df['c_tipo'].apply(lambda x: 'Tercero' if x not in ['Proveedor', 'Cliente'] else x)
+
 st.subheader("Filtros de análisis")
 if df_dups.empty:
     st.info("No se encontraron duplicados con las reglas actuales.")
 else:
-    opciones_party = sorted(df[c_prov].dropna().unique().tolist())
-    f_party = st.multiselect(party_label, options=opciones_party, default=opciones_party)
+    opciones_party = sorted(df["c_tipo"].dropna().unique().tolist())  # Aquí "c_tipo" es la columna de tipo
+    f_party = st.multiselect("Selecciona Proveedores, Clientes y/o Terceros", options=opciones_party, default=opciones_party)
 
     vmin = float(np.nanmin(df[c_monto].values)) if df[c_monto].notna().any() else 0.0
     vmax = float(np.nanmax(df[c_monto].values)) if df[c_monto].notna().any() else 1.0
@@ -368,12 +370,17 @@ else:
             value=(df[c_fecha].min().date(), df[c_fecha].max().date())
         )
         df_dups = df_dups[
-            (df_dups[c_prov].isin(f_party)) &
+            (df_dups["c_tipo"].isin(f_party)) &  # Filtra por el tipo seleccionado
             (df_dups[c_monto].between(f_min, f_max)) &
-            (df_dups[c_fecha].dt.date.between(f_fecha_min, f_fecha_max))
+            (df_dups[c_fecha].dt.date.between(f_fecha_min, f_fecha_max))  # Mantén esta línea para filtrar por fecha
         ]
     else:
-        df_dups = df_dups[df_dups[c_prov].isin(f_party) & df_dups[c_monto].between(f_min, f_max)]
+        df_dups = df_dups[
+            (df_dups["c_tipo"].isin(f_party)) &  # Filtra por el tipo seleccionado
+            df_dups[c_monto].between(f_min, f_max) &
+            (df_dups[c_fecha].dt.date.between(f_fecha_min, f_fecha_max))
+        ]
+   
 # =============================================================================
 # 7) KPIs + TABLA
 # =============================================================================
@@ -396,21 +403,28 @@ st.dataframe(df_dups, use_container_width=True)
 # =============================================================================
 st.subheader("Visualizaciones")
 if not df_dups.empty:
-    prov_agg = df_dups.groupby(c_prov, dropna=False)[c_monto].sum().reset_index()
+    # Agrupar por c_tipo (Proveedor, Cliente, Tercero)
+    tipo_agg = df_dups.groupby("c_tipo", dropna=False)[c_monto].sum().reset_index()
+    
+    # Si tienes Plotly disponible
     if _HAS_PLOTLY:
-        fig1 = px.bar(prov_agg, x=c_prov, y=c_monto, title=f"Monto duplicado por {party_label.lower()}")
+        fig1 = px.bar(tipo_agg, x="c_tipo", y=c_monto, title=f"Monto duplicado por {party_label.lower()}")
         st.plotly_chart(fig1, use_container_width=True)
     else:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
-        ax.bar(prov_agg[c_prov].astype(str), prov_agg[c_monto])
-        ax.set_title(f"Monto duplicado por {party_label.lower()}"); ax.set_xlabel(party_label); ax.set_ylabel("Monto")
+        ax.bar(tipo_agg["c_tipo"].astype(str), tipo_agg[c_monto])
+        ax.set_title(f"Monto duplicado por {party_label.lower()}") 
+        ax.set_xlabel(party_label) 
+        ax.set_ylabel("Monto")
         st.pyplot(fig)
 
+    # Visualización por mes (si hay fechas disponibles)
     if df_dups[c_fecha].notna().any():
         time_agg = df_dups.copy()
         time_agg["_mes"] = time_agg[c_fecha].dt.to_period("M").dt.to_timestamp()
         time_agg = time_agg.groupby("_mes")[c_monto].sum().reset_index()
+
         if _HAS_PLOTLY:
             fig2 = px.line(time_agg, x="_mes", y=c_monto, markers=True, title="Monto duplicado por mes")
             st.plotly_chart(fig2, use_container_width=True)
@@ -418,7 +432,9 @@ if not df_dups.empty:
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots()
             ax.plot(time_agg["_mes"], time_agg[c_monto], marker="o")
-            ax.set_title("Monto duplicado por mes"); ax.set_xlabel("Mes"); ax.set_ylabel("Monto")
+            ax.set_title("Monto duplicado por mes") 
+            ax.set_xlabel("Mes") 
+            ax.set_ylabel("Monto")
             st.pyplot(fig)
 
 # =============================================================================
@@ -432,9 +448,16 @@ def categorizar_riesgo(valor: float) -> str:
     else: return "Bajo"
 
 if not df_dups.empty:
+    # Normalización del monto (riesgo)
     z = (df_dups[c_monto] - df_dups[c_monto].mean()) / (df_dups[c_monto].std(ddof=0) if df_dups[c_monto].std(ddof=0) else 1)
-    df_dups["_freq_party"] = df_dups.groupby(c_prov)[c_prov].transform("count")
+    
+    # Calcular la frecuencia de duplicados por tipo (Proveedor, Cliente, Tercero)
+    df_dups["_freq_party"] = df_dups.groupby("c_tipo")["c_tipo"].transform("count")
+    
+    # Calcular el riesgo basado en la normalización del monto y la frecuencia
     df_dups["_riesgo"] = z.fillna(0) + (df_dups["_freq_party"] / max(df_dups["_freq_party"].max(), 1))
+    
+    # Asignar un nivel de riesgo basado en el valor calculado
     df_dups["Nivel_riesgo"] = df_dups["_riesgo"].apply(categorizar_riesgo)
 
     topn = st.slider("Mostrar Top-N por riesgo", 5, min(50, max(5, len(df_dups))), 10)
@@ -565,3 +588,4 @@ st.info(
 • Exporta el Excel para anexar a tus papeles de trabajo.
 """
 )
+
