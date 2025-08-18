@@ -2,6 +2,9 @@
 
 Aplicación interactiva desarrollada en **Streamlit** que permite detectar facturas duplicadas en grandes volúmenes de datos, calcular indicadores clave y priorizar riesgos según su impacto económico y frecuencia.
 
+🌐 **Accede a la aplicación aquí:**  
+👉 [facturas-duplicadas-caat.streamlit.app](https://facturas-duplicadas-caat.streamlit.app/)
+
 ## ✨ Funcionalidades principales
 - 📂 **Carga de archivos**: Excel (`.xlsx`, `.xls`) o CSV.  
 - 🔍 **Mapeo automático de columnas**: detecta número de factura, proveedor/cliente, fecha y monto.  
