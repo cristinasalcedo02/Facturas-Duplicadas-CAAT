@@ -1,9 +1,11 @@
-streamlit>=1.32
+streamlit>=1.30
 pandas>=2.1
 numpy>=1.26
 openpyxl>=3.1
 xlsxwriter>=3.1
-rapidfuzz>=3.6
-thefuzz>=0.22.1
-plotly>=5.20
-matplotlib>=3.8
+xlrd==1.2.0
+rapidfuzz>=3.0
+thefuzz[speedup]>=0.22
+plotly>=5.18
+matplotlib>=3.7
+reportlab>=4.0
