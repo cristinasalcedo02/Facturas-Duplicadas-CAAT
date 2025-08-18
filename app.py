@@ -1,11 +1,5 @@
 # CAAT Avanzado — Detección de Facturas Duplicadas con Análisis de Riesgo
 # Autor: Grupo A
-# Notas clave:
-# - No exige nombres de columnas fijos (mapeo manual o sugerido automáticamente).
-# - Detección Exacta y Aproximada (con tolerancias por monto y fecha).
-# - Fuzzy matching con bloqueo por proveedor/cliente y bucketing por monto.
-# - KPIs, filtros, gráficos (Plotly con fallback a Matplotlib), y exportación a Excel (múltiples hojas).
-# - Manejo de errores y de tipos (fechas y números robustos).
 
 import io
 import re
@@ -52,22 +46,25 @@ Las facturas duplicadas generan **pagos repetidos**, errores contables y pérdid
 )
 
 # =============================================================================
-# 1) CARGA DE ARCHIVO
+# 1) CARGA DE ARCHIVO (por bytes para evitar caché por nombre)
 # =============================================================================
 file = st.file_uploader("Sube tu archivo Excel o CSV", type=["xlsx", "xls", "csv"])
 
 @st.cache_data(show_spinner=False)
-def _read_file(_file):
-    if _file.name.lower().endswith((".xlsx", ".xls")):
-        return pd.read_excel(_file)
-    return pd.read_csv(_file)
+def _read_file(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+    bio = io.BytesIO(file_bytes)
+    if file_name.lower().endswith((".xlsx", ".xls")):
+        return pd.read_excel(bio)
+    # Ajusta sep=";" si tus CSV lo requieren
+    return pd.read_csv(bio)
 
 if not file:
     st.info("Carga un archivo para comenzar.")
     st.stop()
 
+file_bytes = file.getvalue()
 try:
-    df_raw = _read_file(file)
+    df_raw = _read_file(file_bytes, file.name)
 except Exception as e:
     st.error(f"No se pudo leer el archivo: {e}")
     st.stop()
@@ -76,12 +73,20 @@ if df_raw.empty:
     st.warning("El archivo está vacío.")
     st.stop()
 
-st.success(f"Archivo cargado correctamente: **{df_raw.shape[0]:,} filas × {df_raw.shape[1]} columnas**.")
+st.success(f"Archivo cargado: **{file.name}** · **{len(file_bytes):,} bytes**")
+if st.button("🔄 Forzar recarga del archivo"):
+    st.cache_data.clear()
+    st.experimental_rerun()
+
+# Vista previa corta
+N_PREVIEW = 30
+st.caption(f"Vista previa (primeras {N_PREVIEW} filas)")
+st.dataframe(df_raw.head(N_PREVIEW), use_container_width=True)
 
 # =============================================================================
 # 2) MAPEO — AUTODETECCIÓN + CONFIRMAR/EDITAR (con combinar)
 # =============================================================================
-def _norm_simple(s: str) -> str:
+def _norm(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     return re.sub(r"[^0-9a-z]", "", s.lower())
@@ -98,9 +103,9 @@ _SYNONYMS = {
 cols = df_raw.columns.tolist()
 
 def _best_by_name(keys, headers):
-    keys = [_norm_simple(k) for k in keys]
+    keys = [_norm(k) for k in keys]
     for h in headers:
-        hn = _norm_simple(h)
+        hn = _norm(h)
         if any(k in hn or hn in k for k in keys):
             return h
     return None
@@ -122,7 +127,7 @@ h_fecha = _best_by_name(_SYNONYMS["fecha"], cols) or _best_date(cols)
 h_monto = _best_by_name(_SYNONYMS["monto"], cols) or _best_numeric(cols)
 
 def _party_label_from_header(h: str) -> str:
-    n = _norm_simple(h)
+    n = _norm(h)
     if any(k in n for k in _SYNONYMS["cli_keys"]):
         return "Cliente"
     if any(k in n for k in _SYNONYMS["ter_keys"]):
@@ -180,9 +185,10 @@ else:
     else:
         c_num, c_prov, c_fecha, c_monto = _defaults["num"], _defaults["party"], _defaults["fecha"], _defaults["monto"]
 
+# Validaciones rápidas
 sel_cols = [c_num, c_prov, c_fecha, c_monto]
 if len(set(sel_cols)) < len(sel_cols):
-    st.error("Has seleccionado la **misma columna** para más de un rol (Nº / Parte / Fecha / Monto). Corrige el mapeo.")
+    st.error("Has seleccionado la **misma columna** para más de un rol (Nº/Parte/Fecha/Monto). Corrige el mapeo.")
     st.stop()
 if pd.to_datetime(df_raw[c_fecha], errors='coerce').notna().mean() < 0.5:
     st.warning(f"La columna **Fecha** (`{c_fecha}`) no parece ser fecha en la mayoría de filas.")
@@ -200,6 +206,7 @@ def _strip_accents_lower(s: str) -> str:
 df = df_raw.copy()
 df[c_prov] = df[c_prov].map(_strip_accents_lower)
 
+# Nº de factura normalizado
 df[c_num] = (df[c_num].astype(str).str.lower()
              .str.replace(r"[^0-9a-z]", "", regex=True)
              .str.lstrip("0"))
@@ -228,6 +235,8 @@ bloq_prov  = True
 bloq_mes   = False
 
 if modo == "Aproximado":
+    if not _FUZZ_OK:
+        st.warning("La detección aproximada requiere rapidfuzz/thefuzz. Cambia a 'Exacto' o instala la dependencia.")
     with st.expander("⚙️ Configuración avanzada"):
         usar_simple = st.toggle("Usar selector simple de coincidencia", value=False)
         if usar_simple:
@@ -331,6 +340,7 @@ def detect_approx(df: pd.DataFrame,
         merged = merged.sort_values([c_prov, c_num, c_monto, c_fecha], na_position="last")
     return merged
 
+# Ejecutar
 if modo == "Exacto":
     df_dups = detect_exact(df, c_num, c_prov, c_monto, c_fecha)
 else:
@@ -400,7 +410,7 @@ if not df_dups.empty:
             st.pyplot(fig)
 
 # =============================================================================
-# 9) PRIORIZACIÓN + BLOQUES EN LISTA
+# 9) PRIORIZACIÓN DE RIESGO + BLOQUES EN LISTA (COLORES)
 # =============================================================================
 st.subheader("Priorización de riesgo")
 if not df_dups.empty:
@@ -473,7 +483,7 @@ alerts, concl, recs = construir_alertas_conclusiones(df, df_dups)
 def _html_box(title_emoji: str, items: list, bg: str, border: str):
     if not items:
         return ""
-    lis = "".join(f"<li>{x}</li>" for x in items)  # ► cada punto en lista (viñetas)
+    lis = "".join(f"<li>{x}</li>" for x in items)
     return f"""
     <div style="background:{bg}; border:1px solid {border}; padding:14px 16px; border-radius:10px; margin:12px 0;">
       <div style="font-weight:700; margin-bottom:6px;">{title_emoji}</div>
@@ -523,4 +533,3 @@ st.info(
 • Exporta el Excel para anexar a tus papeles de trabajo.
 """
 )
-
