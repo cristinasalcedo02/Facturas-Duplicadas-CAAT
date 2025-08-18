@@ -14,14 +14,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# Gráficos opcionales (fallback a Matplotlib si no hay Plotly)
+# ── Gráficos (Plotly opcional) ────────────────────────────────────────────────
 try:
     import plotly.express as px
     _HAS_PLOTLY = True
 except Exception:
     _HAS_PLOTLY = False
 
-# Fuzzy matching (preferimos rapidfuzz; si no, thefuzz)
+# ── Fuzzy matching (rapidfuzz > thefuzz > none) ──────────────────────────────
 try:
     from rapidfuzz import fuzz
     _FUZZ_OK = True
@@ -41,19 +41,19 @@ st.markdown(
 **⚠️ ¿Por qué es importante?**  
 Las facturas duplicadas generan **pagos repetidos**, errores contables y pérdida de control. Esta app permite **identificar, analizar y priorizar** duplicados para reforzar controles.
 
-**¿Cómo usar?** **(opcional)**  
-1️⃣ Sube tu archivo (Excel/CSV).  
-2️⃣ Confirma el **mapeo sugerido** o pulsa **Editar mapeo** si necesitas corregir.  
-3️⃣ Elige **Exacto** o **Aproximado**.  
-4️⃣ (Opcional) Ajusta parámetros en **⚙️ Configuración avanzada**.  
-5️⃣ Revisa **KPIs**, tabla y gráficas.  
-6️⃣ **Exporta** resultados a Excel (duplicados, resumen, parámetros).
+**¿Cómo usar?**  
+1) Sube tu archivo (Excel/CSV).  
+2) Confirma el mapeo sugerido o pulsa **Editar mapeo** si necesitas corregir.  
+3) Elige **Exacto** o **Aproximado**.  
+4) (Opcional) Ajusta parámetros en **⚙️ Configuración avanzada**.  
+5) Revisa **KPIs**, tabla y gráficas.  
+6) **Exporta** resultados a Excel (duplicados, resumen, parámetros).
 """
 )
 
-# ------------------------------
+# =============================================================================
 # 1) CARGA DE ARCHIVO
-# ------------------------------
+# =============================================================================
 file = st.file_uploader("Sube tu archivo Excel o CSV", type=["xlsx", "xls", "csv"])
 
 @st.cache_data(show_spinner=False)
@@ -80,10 +80,9 @@ st.success("Archivo cargado correctamente.")
 st.caption("Vista previa (primeras 200 filas)")
 st.dataframe(df_raw.head(200), use_container_width=True)
 
-# ------------------------------
+# =============================================================================
 # 2) MAPEO — AUTODETECCIÓN + CONFIRMAR/EDITAR (con combinar)
-# ------------------------------
-
+# =============================================================================
 def _norm(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -167,7 +166,7 @@ else:
     else:
         c_num, c_prov, c_fecha, c_monto = _defaults["num"], _defaults["prov"], _defaults["fecha"], _defaults["monto"]
 
-# Validaciones
+# Validaciones rápidas
 sel_cols = [c_num, c_prov, c_fecha, c_monto]
 if len(set(sel_cols)) < len(sel_cols):
     st.error("Has seleccionado la **misma columna** para más de un rol (Nº/Proveedor/Fecha/Monto). Corrige el mapeo.")
@@ -177,10 +176,9 @@ if pd.to_datetime(df_raw[c_fecha], errors='coerce').notna().mean() < 0.5:
 if pd.to_numeric(df_raw[c_monto], errors='coerce').notna().mean() < 0.5:
     st.warning(f"La columna **Monto** (`{c_monto}`) no parece numérica en la mayoría de filas.")
 
-# ------------------------------
-# 3) PREPROCESAMIENTO ROBUSTO
-# ------------------------------
-
+# =============================================================================
+# 3) PREPROCESAMIENTO
+# =============================================================================
 def _strip_accents_lower(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -189,18 +187,14 @@ def _strip_accents_lower(s: str) -> str:
 df = df_raw.copy()
 df[c_prov] = df[c_prov].map(_strip_accents_lower)
 
-# Normalizar Nº de factura (alfanumérico)
-df[c_num] = (
-    df[c_num].astype(str).str.lower()
-      .str.replace(r"[^0-9a-z]", "", regex=True)
-      .str.lstrip("0")
-)
+# Nº de factura normalizado (alfa-numérico, sin símbolos, sin ceros a la izquierda)
+df[c_num] = (df[c_num].astype(str).str.lower()
+             .str.replace(r"[^0-9a-z]", "", regex=True)
+             .str.lstrip("0"))
 
-# Tipos
 df[c_fecha] = pd.to_datetime(df[c_fecha], errors="coerce")
 df[c_monto] = pd.to_numeric(df[c_monto], errors="coerce")
 
-# Filtrar filas con llaves válidas
 key_mask = df[[c_num, c_prov, c_monto]].notna().all(axis=1)
 df = df.loc[key_mask].reset_index(drop=True)
 if df.empty:
@@ -209,9 +203,9 @@ if df.empty:
 
 st.success("Datos preprocesados correctamente.")
 
-# ------------------------------
+# =============================================================================
 # 4) CONFIGURACIÓN DE DUPLICADOS
-# ------------------------------
+# =============================================================================
 st.subheader("Configuración de duplicados")
 modo = st.selectbox("Tipo de detección", ["Exacto", "Aproximado"], index=0)
 
@@ -224,23 +218,52 @@ bloq_mes   = False
 
 if modo == "Aproximado":
     with st.expander("⚙️ Configuración avanzada"):
-        umbral_sim = st.slider("Umbral de similitud del Nº (0–100)", 70, 100, 90,
-                               help="Qué tan parecidos deben ser los números de factura para considerarlos duplicados.")
+        # Selector simple opcional
+        usar_simple = st.toggle("Usar selector simple de coincidencia", value=False)
+        if usar_simple:
+            nivel_ui = st.select_slider(
+                "Exigencia de coincidencia del Nº",
+                options=["Muy flexible","Flexible","Intermedia","Estricta","Muy estricta"],
+                value="Estricta",
+                help="Elige qué tan estricta debe ser la coincidencia del número de factura."
+            )
+            mapa = {"Muy flexible": 70, "Flexible": 78, "Intermedia": 85, "Estricta": 92, "Muy estricta": 97}
+            umbral_sim = mapa[nivel_ui]
+            st.caption(f"Coincidencia mínima equivalente: **{umbral_sim}%**")
+        else:
+            umbral_sim = st.slider(
+                "Coincidencia mínima del Nº (0–100)",
+                70, 100, 90,
+                help="Porcentaje mínimo de parecido entre números de factura. "
+                     "Más alto = más estricto; más bajo = más flexible."
+            )
+            nivel = ("Muy estricto" if umbral_sim >= 95 else
+                     "Estricto" if umbral_sim >= 90 else
+                     "Intermedio" if umbral_sim >= 80 else
+                     "Flexible")
+            st.caption(f"Nivel actual: **{nivel}** — subir = más estricta, bajar = más flexible.")
+
         colA, colB = st.columns(2)
         with colA:
-            tol_monto = st.number_input("Tolerancia de monto (misma moneda)", min_value=0.0, value=0.00, step=0.01,
-                                        help="Permite diferencias pequeñas por redondeo/centavos.")
+            tol_monto = st.number_input(
+                "Tolerancia de monto (misma moneda)",
+                min_value=0.0, value=0.00, step=0.01,
+                help="Diferencia máxima de importe permitida (ej.: 1.00 permite ±1 unidad)."
+            )
         with colB:
-            tol_dias  = st.number_input("Tolerancia de fecha (± días)", min_value=0, value=0, step=1,
-                                        help="Considera duplicados emitidos cerca en el tiempo.")
+            tol_dias  = st.number_input(
+                "Tolerancia de fecha (± días)",
+                min_value=0, value=0, step=1,
+                help="Acepta diferencias de fecha hasta X días. Si hay muchas fechas vacías, usa 0."
+            )
         bloq_prov = st.checkbox("Comparar solo dentro del mismo proveedor", value=True,
                                 help="Reduce falsos positivos y acelera el análisis.")
         bloq_mes  = st.checkbox("Bloquear por mismo mes de emisión", value=False,
-                                help="Acelera en archivos grandes.")
+                                help="Acelera en archivos grandes (más estricto).")
 
-# ------------------------------
+# =============================================================================
 # 5) DETECCIÓN
-# ------------------------------
+# =============================================================================
 @st.cache_data(show_spinner=False)
 def detect_exact(df: pd.DataFrame, c_num: str, c_prov: str, c_monto: str, c_fecha: str):
     mask = df.duplicated(subset=[c_num, c_prov, c_monto], keep=False)
@@ -256,18 +279,16 @@ def _pairwise(sg: pd.DataFrame, results: list, c_num: str, c_fecha: str, c_monto
         num_i, fec_i, mon_i, id_i = rows[i]
         for j in range(i+1, n):
             num_j, fec_j, mon_j, id_j = rows[j]
-            # Tolerancia monto
+            # Tolerancia de monto
             if not (pd.notna(mon_i) and pd.notna(mon_j)):
                 continue
             if abs(mon_i - mon_j) > tol_monto:
                 continue
-            # Tolerancia fecha
-            if tol_dias > 0:
-                if pd.isna(fec_i) or pd.isna(fec_j):
-                    continue
+            # Tolerancia de fecha (solo aplica si ambas existen)
+            if tol_dias > 0 and pd.notna(fec_i) and pd.notna(fec_j):
                 if abs((fec_i - fec_j).days) > tol_dias:
                     continue
-            # Similitud de número
+            # Similitud de Nº
             sim = fuzz.ratio(str(num_i), str(num_j))
             if sim >= sim_thr:
                 results.append([id_i, id_j, sim])
@@ -278,17 +299,16 @@ def detect_approx(df: pd.DataFrame,
                   sim_thr: int, tol_monto: float, tol_dias: int,
                   bloquear_por_proveedor: bool, bloquear_por_mes: bool):
     if not _FUZZ_OK:
-        return pd.DataFrame(columns=df.columns.tolist() + ["_match_id", "_sim", "_regla"]) 
+        return pd.DataFrame(columns=df.columns.tolist() + ["_match_id", "_sim", "_regla"])
 
     work = df[[c_num, c_prov, c_fecha, c_monto]].copy()
     work["_rowid"] = np.arange(len(work))
 
-    # Agrupaciones para reducir comparaciones
     groups = [work]
     if bloquear_por_proveedor:
         groups = [g for _, g in work.groupby(c_prov)]
 
-    results = []  # [(id1, id2, sim), ...]
+    results = []  # (id1, id2, sim)
     for g in groups:
         if bloquear_por_mes and g[c_fecha].notna().any():
             subgroups = [sg for _, sg in g.groupby(g[c_fecha].dt.to_period("M"))]
@@ -297,7 +317,6 @@ def detect_approx(df: pd.DataFrame,
         for sg in subgroups:
             if sg.empty or len(sg) < 2:
                 continue
-            # Bucketing por monto para rendimiento
             if tol_monto > 0:
                 bin_size = max(tol_monto, 1.0)
                 bins = np.floor(sg[c_monto].fillna(0) / bin_size)
@@ -307,9 +326,9 @@ def detect_approx(df: pd.DataFrame,
                 _pairwise(sg, results, c_num, c_fecha, c_monto, sim_thr, tol_monto, tol_dias)
 
     if not results:
-        return pd.DataFrame(columns=df.columns.tolist() + ["_match_id", "_sim", "_regla"]) 
+        return pd.DataFrame(columns=df.columns.tolist() + ["_match_id", "_sim", "_regla"])
 
-    # Conservar similitud al pasar a formato largo (FIX del KeyError: '_sim')
+    # ⬇️ FIX: conservar _sim al pivotear
     pairs = pd.DataFrame(results, columns=["_id1", "_id2", "_sim"])
     pairs_long = pairs.melt(id_vars=["_sim"], value_vars=["_id1", "_id2"],
                             var_name="side", value_name="_rowid")
@@ -322,7 +341,7 @@ def detect_approx(df: pd.DataFrame,
         out[["_rowid", "_match_id", "_sim", "_regla"]],
         left_index=True, right_on="_rowid", how="left"
     )
-    merged = merged.drop(columns=["_rowid"]) 
+    merged = merged.drop(columns=["_rowid"])
     merged = merged[merged["_match_id"].notna()].copy()
     if c_fecha in merged:
         merged = merged.sort_values([c_prov, c_num, c_monto, c_fecha], na_position="last")
@@ -336,9 +355,9 @@ else:
                             umbral_sim, tol_monto, tol_dias,
                             bloq_prov, bloq_mes)
 
-# ------------------------------
-# 6) FILTROS DE ANÁLISIS
-# ------------------------------
+# =============================================================================
+# 6) FILTROS
+# =============================================================================
 st.subheader("Filtros de análisis")
 if df_dups.empty:
     st.info("No se encontraron duplicados con las reglas actuales.")
@@ -350,9 +369,9 @@ else:
     f_min, f_max = st.slider("Rango de monto", vmin, vmax, (vmin, vmax))
     df_dups = df_dups[df_dups[c_prov].isin(f_prov) & df_dups[c_monto].between(f_min, f_max)]
 
-# ------------------------------
-# 7) KPIs Y TABLA
-# ------------------------------
+# =============================================================================
+# 7) KPIs + TABLA
+# =============================================================================
 st.subheader("Indicadores clave")
 N = len(df)
 D = len(df_dups)
@@ -367,12 +386,11 @@ col4.metric("Monto Total Duplicados", f"$ {monto_dup:,.2f}")
 st.subheader("Tabla de facturas potencialmente duplicadas")
 st.dataframe(df_dups, use_container_width=True)
 
-# ------------------------------
+# =============================================================================
 # 8) VISUALIZACIONES
-# ------------------------------
+# =============================================================================
 st.subheader("Visualizaciones")
 if not df_dups.empty:
-    # Monto duplicado por proveedor
     prov_agg = df_dups.groupby(c_prov, dropna=False)[c_monto].sum().reset_index()
     if _HAS_PLOTLY:
         fig1 = px.bar(prov_agg, x=c_prov, y=c_monto, title="Monto duplicado por proveedor")
@@ -381,11 +399,9 @@ if not df_dups.empty:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
         ax.bar(prov_agg[c_prov].astype(str), prov_agg[c_monto])
-        ax.set_title("Monto duplicado por proveedor")
-        ax.set_xlabel("Proveedor"); ax.set_ylabel("Monto")
+        ax.set_title("Monto duplicado por proveedor"); ax.set_xlabel("Proveedor"); ax.set_ylabel("Monto")
         st.pyplot(fig)
 
-    # Serie temporal por mes
     if df_dups[c_fecha].notna().any():
         time_agg = df_dups.copy()
         time_agg["_mes"] = time_agg[c_fecha].dt.to_period("M").dt.to_timestamp()
@@ -400,24 +416,9 @@ if not df_dups.empty:
             ax.set_title("Monto duplicado por mes"); ax.set_xlabel("Mes"); ax.set_ylabel("Monto")
             st.pyplot(fig)
 
-    # Frecuencia por número
-    freq = df_dups.groupby(c_num)[c_num].size().rename("Frecuencia").reset_index()
-    freq = freq.merge(df_dups.groupby(c_num)[c_monto].sum().reset_index(), on=c_num, how="left")
-    if _HAS_PLOTLY:
-        fig3 = px.scatter(freq, x=c_num, y=c_monto, size="Frecuencia", color="Frecuencia",
-                          title="Monto vs Frecuencia de Nº de factura")
-        st.plotly_chart(fig3, use_container_width=True)
-    else:
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        ax.scatter(np.arange(len(freq)), freq[c_monto])
-        ax.set_title("Monto vs Frecuencia (por Nº de factura)")
-        ax.set_xlabel("Índice"); ax.set_ylabel("Monto")
-        st.pyplot(fig)
-
-# ------------------------------
-# 9) PRIORIZACIÓN DE RIESGO (sencilla)
-# ------------------------------
+# =============================================================================
+# 9) PRIORIZACIÓN + ALERTAS/CONCLUSIONES/RECOMENDACIONES
+# =============================================================================
 st.subheader("Priorización de riesgo (simple)")
 if not df_dups.empty:
     z = (df_dups[c_monto] - df_dups[c_monto].mean()) / (df_dups[c_monto].std(ddof=0) if df_dups[c_monto].std(ddof=0) else 1)
@@ -426,9 +427,90 @@ if not df_dups.empty:
     topn = st.slider("Mostrar Top-N por riesgo", 5, min(50, max(5, len(df_dups))), 10)
     st.dataframe(df_dups.sort_values("_riesgo", ascending=False).head(topn), use_container_width=True)
 
-# ------------------------------
+# ── Alertas / Conclusiones / Recomendaciones ─────────────────────────────────
+st.subheader("Alertas, conclusiones y recomendaciones")
+
+def construir_alertas_conclusiones(df, df_dups):
+    alerts, concl, recs = [], [], []
+    N, D = len(df), len(df_dups)
+    porc = (D / N * 100) if N else 0.0
+    monto_total = float(df[c_monto].sum()) if N else 0.0
+    monto_dup = float(df_dups[c_monto].sum()) if D else 0.0
+
+    # SIN DUPLICADOS
+    if D == 0:
+        concl.append("No se detectaron posibles duplicados con las reglas actuales.")
+        recs.extend([
+            "Verifica el mapeo de columnas (Nº, Proveedor, Fecha, Monto) y, si aplica, combina campos.",
+            "Prueba bajar la coincidencia mínima o subir las tolerancias de monto/fecha.",
+            "Amplía el filtro de 'Rango de monto' y revisa si hay múltiples monedas.",
+            "Ejecuta en 'Aproximado' si hoy estás en 'Exacto'."
+        ])
+        return alerts, concl, recs
+
+    # Alertas
+    if porc >= 10:
+        alerts.append(f"Tasa de duplicados elevada: {porc:.2f}% (≥10%).")
+    elif porc >= 3:
+        alerts.append(f"Tasa de duplicados moderada: {porc:.2f}% (≥3%).")
+
+    if monto_total and (monto_dup / monto_total) >= 0.02:
+        alerts.append("El monto duplicado supera el 2% del total facturado.")
+
+    prov_agg = df_dups.groupby(c_prov)[c_monto].sum().sort_values(ascending=False)
+    if not prov_agg.empty and monto_dup:
+        top_prov, top_amt = prov_agg.index[0], float(prov_agg.iloc[0])
+        share = top_amt / monto_dup
+        if share >= 0.5:
+            alerts.append(f"Concentración: {top_prov} acumula {share:.0%} del monto duplicado.")
+
+    sizes = df_dups.groupby([c_prov, c_num]).size()
+    grupos_3p = sizes[sizes >= 3]
+    if not grupos_3p.empty:
+        alerts.append(f"Se detectaron {len(grupos_3p)} grupo(s) de tres o más facturas con el mismo Nº y proveedor (máx: {int(grupos_3p.max())}).")
+
+    if (df_dups.groupby(c_num)[c_prov].nunique() >= 2).any():
+        alerts.append("Hay números de factura repetidos en distintos proveedores (posible cruce o error de alta).")
+
+    if c_fecha in df_dups and df_dups[c_fecha].notna().any():
+        recientes = df_dups[df_dups[c_fecha] >= (pd.Timestamp.today().normalize() - pd.Timedelta(days=30))]
+        if len(recientes) > 0:
+            alerts.append(f"{len(recientes)} duplicado(s) en los últimos 30 días.")
+
+    if c_fecha in df and df[c_fecha].isna().mean() > 0.2:
+        alerts.append("Más del 20% de las facturas no tiene fecha; esto puede ocultar duplicados.")
+
+    # Conclusiones
+    concl.append(f"Se identificaron {D:,} posibles duplicados ({porc:.2f}%) por un total de $ {monto_dup:,.2f}.")
+    if alerts:
+        concl.append("Los hallazgos muestran señales de riesgo que requieren revisión prioritaria.")
+
+    # Recomendaciones
+    recs.extend([
+        "Revisar primero el Top-N por riesgo (monto alto + proveedores con más repeticiones).",
+        "Configurar en el ERP la validación de duplicados por Nº + proveedor + monto + fecha (con tolerancias).",
+        "Mantener limpio el maestro de proveedores (homónimos, RUC/NIT duplicados).",
+        "Bloquear pagos hasta aclaración cuando el grupo (_match_id) tenga ≥3 facturas.",
+    ])
+    return alerts, concl, recs
+
+alerts, concl, recs = construir_alertas_conclusiones(df, df_dups)
+
+if alerts:
+    st.warning("**Alertas:**")
+    for a in alerts: st.write("• " + a)
+else:
+    st.success("Sin alertas destacables con los parámetros actuales.")
+
+st.markdown("**Conclusiones**")
+for c in concl: st.write("• " + c)
+
+st.markdown("**Recomendaciones**")
+for r in recs: st.write("• " + r)
+
+# =============================================================================
 # 10) EXPORTACIÓN
-# ------------------------------
+# =============================================================================
 st.subheader("Exportar resultados")
 if st.button("Descargar Excel (duplicados + resumen + parámetros)"):
     if df_dups.empty:
@@ -436,18 +518,15 @@ if st.button("Descargar Excel (duplicados + resumen + parámetros)"):
     else:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            # Hoja 1: Duplicados
             df_dups.to_excel(writer, index=False, sheet_name="Duplicados")
-            # Hoja 2: Resumen por proveedor
             prov_res = df_dups.groupby(c_prov, dropna=False).agg(
                 total_monto=(c_monto, "sum"),
                 n_items=(c_prov, "size"),
             ).reset_index().sort_values("total_monto", ascending=False)
             prov_res.to_excel(writer, index=False, sheet_name="Resumen_Proveedor")
-            # Hoja 3: Parámetros
             params = {
                 "modo": modo,
-                "umbral_sim": umbral_sim if modo == "Aproximado" else None,
+                "coincidencia_min": umbral_sim if modo == "Aproximado" else None,
                 "tol_monto":  tol_monto if modo == "Aproximado" else None,
                 "tol_dias":   tol_dias  if modo == "Aproximado" else None,
                 "bloq_prov":  bloq_prov if modo == "Aproximado" else None,
@@ -462,13 +541,15 @@ if st.button("Descargar Excel (duplicados + resumen + parámetros)"):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-# ------------------------------
+# =============================================================================
 # 11) NOTAS
-# ------------------------------
-st.info("""
+# =============================================================================
+st.info(
+    """
 **Buenas prácticas**  
 • Verifica moneda antes de usar tolerancia de monto.  
-• Aumenta el umbral si ves muchos falsos positivos; reduce si quieres capturar más sospechosos.  
+• Sube la *coincidencia mínima* si hay falsos positivos; bájala si quieres capturar más sospechosos.  
 • Bloquear por proveedor (y por mes) acelera en archivos grandes.  
 • Exporta el Excel para anexar a tus papeles de trabajo.
-""")
+"""
+)
