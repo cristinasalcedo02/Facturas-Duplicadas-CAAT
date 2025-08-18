@@ -52,8 +52,7 @@ Las facturas duplicadas generan **pagos repetidos**, errores contables y pérdid
 4) (Opcional) Ajusta parámetros en **⚙️ Configuración avanzada**.  
 5) Revisa **KPIs**, tabla y gráficas.  
 6) **Exporta** resultados a Excel o PDF.
-"""
-)
+""")
 
 # =============================================================================
 # 1) CARGA DE ARCHIVO (con selector de hoja y opción "todas")
@@ -757,3 +756,4 @@ else:
                 ("ALIGN", (-1,1), (-1,-1), "RIGHT"),
             ]))
             story.append(Paragraph(f"Detalle de duplicados (muestra de {len(df_show):
+
