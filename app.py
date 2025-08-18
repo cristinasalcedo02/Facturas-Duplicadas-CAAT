@@ -1,4 +1,3 @@
-
 # CAAT Avanzado — Detección de Facturas Duplicadas con Análisis de Riesgo
 # Autor: Grupo A
 
@@ -80,6 +79,9 @@ st.success(f"Archivo cargado: **{file.name}** · **{len(file_bytes):,} bytes**")
 N_PREVIEW = 40
 st.caption(f"Vista previa (primeras {N_PREVIEW} filas)")
 st.dataframe(df_raw.head(N_PREVIEW), use_container_width=True)
+
+# Aplicar clasificación de 'Tercero' si no es ni Proveedor ni Cliente
+df_raw['c_tipo'] = df_raw['c_tipo'].apply(lambda x: 'Tercero' if x not in ['Proveedor', 'Cliente'] else x)
 
 # =============================================================================
 # 2) MAPEO — AUTODETECCIÓN + CONFIRMAR/EDITAR (con combinar)
@@ -355,7 +357,7 @@ st.subheader("Filtros de análisis")
 if df_dups.empty:
     st.info("No se encontraron duplicados con las reglas actuales.")
 else:
-    opciones_party = sorted(df["c_tipo"].dropna().unique().tolist())  # Aquí "c_tipo" es la columna de tipo
+    opciones_party = sorted(df["c_tipo"].dropna().unique().tolist())  # "c_tipo" es la columna de tipo
     f_party = st.multiselect("Selecciona Proveedores, Clientes y/o Terceros", options=opciones_party, default=opciones_party)
 
     vmin = float(np.nanmin(df[c_monto].values)) if df[c_monto].notna().any() else 0.0
@@ -377,7 +379,7 @@ else:
     else:
         df_dups = df_dups[
             (df_dups["c_tipo"].isin(f_party)) &  # Filtra por el tipo seleccionado
-            df_dups[c_monto].between(f_min, f_max) &
+            (df_dups[c_monto].between(f_min, f_max)) &
             (df_dups[c_fecha].dt.date.between(f_fecha_min, f_fecha_max))
         ]
    
@@ -588,4 +590,5 @@ st.info(
 • Exporta el Excel para anexar a tus papeles de trabajo.
 """
 )
+
 
