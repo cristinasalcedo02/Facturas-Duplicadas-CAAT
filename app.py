@@ -755,5 +755,6 @@ else:
                 ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#fff9fb")]),
                 ("ALIGN", (-1,1), (-1,-1), "RIGHT"),
             ]))
-            story.append(Paragraph(f"Detalle de duplicados (muestra de {len(df_show):
+            story.append(Paragraph(f"Detalle de duplicados (muestra de {n} filas)", h3))
+
 
