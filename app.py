@@ -80,9 +80,17 @@ N_PREVIEW = 40
 st.caption(f"Vista previa (primeras {N_PREVIEW} filas)")
 st.dataframe(df_raw.head(N_PREVIEW), use_container_width=True)
 
-# Aplicar clasificación de 'Tercero' si no es ni Proveedor ni Cliente
-df_raw['c_tipo'] = df_raw['c_tipo'].apply(lambda x: 'Tercero' if x not in ['Proveedor', 'Cliente'] else x)
+st.write(df_raw.columns)
 
+# Si la columna 'c_tipo' no existe, crearla a partir de otra columna existente
+if 'c_tipo' not in df_raw.columns:
+    if 'tipo_entidad' in df_raw.columns:
+        df_raw['c_tipo'] = df_raw['tipo_entidad'].apply(lambda x: 'Tercero' if x not in ['Proveedor', 'Cliente'] else x)
+    else:
+        df_raw['c_tipo'] = 'Tercero'  # Si no hay columna tipo_entidad, asignamos 'Tercero' por defecto
+
+# Verifica si la columna se creó correctamente
+st.write(df_raw.head())
 # =============================================================================
 # 2) MAPEO — AUTODETECCIÓN + CONFIRMAR/EDITAR (con combinar)
 # =============================================================================
@@ -590,5 +598,6 @@ st.info(
 • Exporta el Excel para anexar a tus papeles de trabajo.
 """
 )
+
 
 
