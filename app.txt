@@ -1,0 +1,144 @@
+# CAAT Avanzado - Detección de Facturas Duplicadas con Análisis de Riesgo
+import streamlit as st
+import pandas as pd
+import numpy as np
+from thefuzz import fuzz
+from thefuzz import process
+import plotly.express as px
+
+# ---- 0. Título e introducción con mini guía ----
+st.title("Control Avanzado de Facturas: Duplicados y Análisis de Riesgo")
+
+st.markdown("""
+**⚠️ Importancia de detectar duplicados de factura:**  
+Las facturas duplicadas representan un riesgo financiero y operativo significativo: pueden generar **pagos repetidos**, errores contables y pérdida de control sobre los recursos de la empresa. Esta app permite **identificar, analizar y priorizar duplicados** para que los auditores tomen decisiones informadas y refuercen los controles internos.
+
+**Mini guía resumida de la app:**  
+1️⃣ **Carga tu archivo:** Excel o CSV con las facturas a analizar.  
+2️⃣ **Selecciona columnas:** Indica cuál corresponde a Número de factura, Proveedor, Fecha y Monto.  
+3️⃣ **Configura la detección:** Duplicados Exactos o Aproximados; ajusta el umbral de similitud si corresponde.  
+4️⃣ **Aplica filtros:** Por proveedor o rango de monto para enfocar el análisis.  
+5️⃣ **Explora los resultados:** KPIs con monto total y duplicados críticos, tabla interactiva y gráficos de distribución.  
+6️⃣ **Analiza el riesgo:** Identifica duplicados de alto impacto financiero y frecuencia por proveedor o periodo.  
+7️⃣ **Exporta tus hallazgos:** Descarga los duplicados en CSV para reportes o auditoría.
+""")
+
+# ---- 1. Carga de archivo ----
+uploaded_file = st.file_uploader("Sube tu archivo Excel o CSV", type=['xlsx', 'xls', 'csv'])
+
+if uploaded_file:
+    try:
+        if uploaded_file.name.endswith(('xlsx','xls')):
+            df = pd.read_excel(uploaded_file)
+        else:
+            df = pd.read_csv(uploaded_file)
+        st.success("Archivo cargado correctamente.")
+        st.write("Vista previa de los datos:")
+        st.dataframe(df.head())
+    except Exception as e:
+        st.error(f"Error al leer el archivo: {e}")
+        st.stop()
+    
+    # ---- 2. Selección de columnas ----
+    st.subheader("Mapeo de columnas")
+    cols = df.columns.tolist()
+    col_num_fac = st.selectbox("Seleccione la columna de Número de Factura", cols)
+    col_prov = st.selectbox("Seleccione la columna de Proveedor", cols)
+    col_fecha = st.selectbox("Seleccione la columna de Fecha de Emisión", cols)
+    col_monto = st.selectbox("Seleccione la columna de Monto", cols)
+    
+    # ---- 3. Preprocesamiento ----
+    df = df.copy()
+    df[col_prov] = df[col_prov].astype(str).str.lower().str.strip()
+    df[col_num_fac] = df[col_num_fac].astype(str).str.replace(r'[^0-9a-zA-Z]', '', regex=True)
+    df[col_fecha] = pd.to_datetime(df[col_fecha], errors='coerce')
+    df[col_monto] = pd.to_numeric(df[col_monto], errors='coerce')
+    st.success("Datos preprocesados correctamente.")
+
+    # ---- 4. Configuración duplicados ----
+    st.subheader("Configuración de detección de duplicados")
+    tipo_dup = st.selectbox("Tipo de duplicado", ["Exacto", "Aproximado"])
+    if tipo_dup == "Aproximado":
+        umbral = st.slider("Umbral de similitud (%)", 70, 100, 90)
+    
+    # ---- 5. Detección de duplicados ----
+    def duplicados_exactos(df):
+        dup = df[df.duplicated(subset=[col_num_fac, col_prov, col_monto], keep=False)]
+        return dup.sort_values([col_prov, col_num_fac])
+    
+    def duplicados_aproximados(df, umbral=90):
+        df_dup = df.copy()
+        df_dup['duplicado'] = False
+        registros = df_dup[[col_num_fac, col_prov]].values.tolist()
+        for i in range(len(registros)):
+            for j in range(i+1, len(registros)):
+                similitud_num = fuzz.ratio(str(registros[i][0]), str(registros[j][0]))
+                similitud_prov = fuzz.ratio(str(registros[i][1]), str(registros[j][1]))
+                if (similitud_num >= umbral) and (similitud_prov >= umbral):
+                    df_dup.loc[i,'duplicado'] = True
+                    df_dup.loc[j,'duplicado'] = True
+        return df_dup[df_dup['duplicado']]
+
+    if tipo_dup == "Exacto":
+        df_duplicados = duplicados_exactos(df)
+    else:
+        df_duplicados = duplicados_aproximados(df, umbral)
+
+    # ---- 6. Filtros interactivos ----
+    st.subheader("Filtros de análisis")
+    proveedores = st.multiselect("Filtrar por proveedor", options=df[col_prov].unique(), default=df[col_prov].unique())
+    df_duplicados = df_duplicados[df_duplicados[col_prov].isin(proveedores)]
+    
+    monto_min, monto_max = st.slider("Filtrar por monto", 
+                                     float(df[col_monto].min()), float(df[col_monto].max()),
+                                     (float(df[col_monto].min()), float(df[col_monto].max())))
+    df_duplicados = df_duplicados[(df_duplicados[col_monto] >= monto_min) & (df_duplicados[col_monto] <= monto_max)]
+    
+    # ---- 7. KPIs y métricas ----
+    st.subheader("Indicadores clave")
+    total_facturas = len(df)
+    total_duplicados = len(df_duplicados)
+    porcentaje_duplicados = round((total_duplicados/total_facturas)*100,2)
+    monto_total = df_duplicados[col_monto].sum()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Facturas", total_facturas)
+    col2.metric("Duplicados", total_duplicados)
+    col3.metric("Porcentaje Duplicados (%)", porcentaje_duplicados)
+    col4.metric("Monto Total Duplicados", f"${monto_total:,.2f}")
+    
+    # ---- 8. Tabla de resultados ----
+    st.subheader("Tabla de Facturas Duplicadas")
+    st.dataframe(df_duplicados)
+
+    # ---- 9. Visualizaciones ----
+    st.subheader("Visualización de duplicados")
+    
+    if not df_duplicados.empty:
+        # Monto duplicado por proveedor
+        df_prov = df_duplicados.groupby(col_prov)[col_monto].sum().reset_index()
+        fig1 = px.bar(df_prov, x=col_prov, y=col_monto, title="Monto Duplicado por Proveedor", color=col_monto)
+        st.plotly_chart(fig1)
+        
+        # Distribución temporal de duplicados
+        df_fecha = df_duplicados.groupby(df_duplicados[col_fecha].dt.to_period("M"))[col_monto].sum().reset_index()
+        df_fecha[col_fecha] = df_fecha[col_fecha].dt.to_timestamp()
+        fig2 = px.line(df_fecha, x=col_fecha, y=col_monto, title="Monto Duplicado por Mes", markers=True)
+        st.plotly_chart(fig2)
+        
+        # Scatter de monto vs frecuencia
+        df_scatter = df_duplicados.groupby(col_num_fac)[col_monto].sum().reset_index()
+        df_scatter['Frecuencia'] = df_duplicados.groupby(col_num_fac)[col_num_fac].transform('count')
+        fig3 = px.scatter(df_scatter, x=col_num_fac, y=col_monto, size='Frecuencia', color='Frecuencia',
+                          title="Monto vs Frecuencia de Facturas Duplicadas")
+        st.plotly_chart(fig3)
+    
+    # ---- 10. Exportar resultados ----
+    st.subheader("Exportar resultados")
+    csv = df_duplicados.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Descargar CSV de duplicados",
+        data=csv,
+        file_name='duplicados_avanzados.csv',
+        mime='text/csv'
+    )
