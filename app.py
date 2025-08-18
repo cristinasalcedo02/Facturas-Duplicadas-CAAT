@@ -3,7 +3,7 @@
 # Notas clave:
 # - No exige nombres de columnas fijos (mapeo manual o sugerido automáticamente).
 # - Detección Exacta y Aproximada (con tolerancias por monto y fecha).
-# - Fuzzy matching con bloqueo por proveedor y bucketing por monto.
+# - Fuzzy matching con bloqueo por proveedor/cliente y bucketing por monto.
 # - KPIs, filtros, gráficos (Plotly con fallback a Matplotlib), y exportación a Excel (múltiples hojas).
 # - Manejo de errores y de tipos (fechas y números robustos).
 
@@ -47,7 +47,7 @@ Las facturas duplicadas generan **pagos repetidos**, errores contables y pérdid
 3) Elige **Exacto** o **Aproximado**.  
 4) (Opcional) Ajusta parámetros en **⚙️ Configuración avanzada**.  
 5) Revisa **KPIs**, tabla y gráficas.  
-6) **Exporta** resultados a Excel (duplicados, resumen, parámetros).
+6) **Exporta** resultados a Excel (duplicados, resumen).
 """
 )
 
@@ -81,16 +81,32 @@ st.caption("Vista previa (primeras 200 filas)")
 st.dataframe(df_raw.head(200), use_container_width=True)
 
 # =============================================================================
-# 2) MAPEO — AUTODETECCIÓN + CONFIRMAR/EDITAR (con combinar)
+# 2) MAPEO — AUTODETECCIÓN + CONFIRMAR/EDITAR (con combinar) + ROL DINÁMICO
 # =============================================================================
+
 def _norm(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     return re.sub(r"[^0-9a-z]", "", s.lower())
 
+# Detectar si el campo contraparte es cliente/proveedor/tercero
+
+def _party_label_from_header(h: str) -> str:
+    n = _norm(h)
+    if any(w in n for w in ["cliente", "client", "customer", "buyer"]):
+        return "cliente"
+    if any(w in n for w in ["proveedor", "supplier", "vendor", "acreedor"]):
+        return "proveedor"
+    return "tercero"
+
+# Plural agradable en español
+
+def _party_plural(label: str) -> str:
+    return {"cliente": "clientes", "proveedor": "proveedores", "tercero": "terceros"}.get(label, "terceros")
+
 _SYNONYMS = {
     "num":   ["numero","número","num","nro","no","factura","invoice","folio","serie","secuencia","documento","doc"],
-    "prov":  ["proveedor","supplier","vendor","ruc","nit","taxid","nombreproveedor","provider"],
+    "prov":  ["proveedor","supplier","vendor","ruc","nit","taxid","nombreproveedor","provider","cliente","customer","client"],
     "fecha": ["fecha","emision","emisión","date","fechafactura","postingdate","documentdate","fechaemision"],
     "monto": ["monto","importe","valor","total","amount","subtotal","grandtotal","neto","bruto","totallinea","totaldoc"],
 }
@@ -120,6 +136,10 @@ h_monto = _best_by_name(_SYNONYMS["monto"], cols) or _best_numeric(cols)
 
 _defaults = {"num": h_num, "prov": h_prov, "fecha": h_fecha, "monto": h_monto}
 
+# Etiqueta dinámica propuesta para el mapeo (según autodetección)
+party_label_guess = _party_label_from_header(_defaults["prov"])  # "cliente"|"proveedor"|"tercero"
+party_title_guess = party_label_guess.capitalize()
+
 if "edit_mapping" not in st.session_state:
     st.session_state.edit_mapping = False
 
@@ -128,8 +148,8 @@ st.write("Revisé tu archivo y esto es lo que **detecté automáticamente**:")
 
 cA, cB, cC, cD = st.columns(4)
 cA.metric("Nº de factura", _defaults["num"])
-cB.metric("Proveedor", _defaults["prov"])
-cC.metric("Fecha", _defaults["fecha"])
+cB.metric(party_title_guess, _defaults["prov"])  # dinámico
+cC.metric("Fecha", _defaults["fecha"]) 
 cD.metric("Monto", _defaults["monto"])
 
 b1, b2 = st.columns([1,1])
@@ -145,7 +165,7 @@ else:
     if st.session_state.edit_mapping:
         e1, e2, e3, e4 = st.columns(4)
         with e1: c_num   = st.selectbox("Nº de factura", cols, index=cols.index(_defaults["num"]))
-        with e2: c_prov  = st.selectbox("Proveedor",   cols, index=cols.index(_defaults["prov"]))
+        with e2: c_prov  = st.selectbox(party_title_guess, cols, index=cols.index(_defaults["prov"]))  # dinámico
         with e3: c_fecha = st.selectbox("Fecha de emisión", cols, index=cols.index(_defaults["fecha"]))
         with e4: c_monto = st.selectbox("Monto", cols, index=cols.index(_defaults["monto"]))
         with st.expander("Opciones para combinar campos (opcional)"):
@@ -156,20 +176,25 @@ else:
                 if sel:
                     df_raw["__num__"] = df_raw[sel].astype(str).agg(lambda r: sep.join([x.strip() for x in r]), axis=1)
                     c_num = "__num__"
-            comb_prov = st.checkbox("Combinar columnas para Proveedor", value=False)
+            comb_prov = st.checkbox("Combinar columnas para Contraparte", value=False)
             if comb_prov:
-                selp = st.multiselect("Columnas a combinar (Proveedor)", options=cols, default=[c_prov])
-                sepp = st.text_input("Separador proveedor", value=" ", max_chars=3)
+                selp = st.multiselect("Columnas a combinar (Contraparte)", options=cols, default=[c_prov])
+                sepp = st.text_input("Separador contraparte", value=" ", max_chars=3)
                 if selp:
                     df_raw["__prov__"] = df_raw[selp].astype(str).agg(lambda r: sepp.join([x.strip() for x in r]), axis=1)
                     c_prov = "__prov__"
     else:
         c_num, c_prov, c_fecha, c_monto = _defaults["num"], _defaults["prov"], _defaults["fecha"], _defaults["monto"]
 
+# Rol final (según lo que quedó elegido)
+party_label = _party_label_from_header(c_prov)   # "cliente"|"proveedor"|"tercero"
+party_title = party_label.capitalize()
+party_plural = _party_plural(party_label)
+
 # Validaciones rápidas
 sel_cols = [c_num, c_prov, c_fecha, c_monto]
 if len(set(sel_cols)) < len(sel_cols):
-    st.error("Has seleccionado la **misma columna** para más de un rol (Nº/Proveedor/Fecha/Monto). Corrige el mapeo.")
+    st.error("Has seleccionado la **misma columna** para más de un rol (Nº/Contraparte/Fecha/Monto). Corrige el mapeo.")
     st.stop()
 if pd.to_datetime(df_raw[c_fecha], errors='coerce').notna().mean() < 0.5:
     st.warning(f"La columna **Fecha** (`{c_fecha}`) no parece ser fecha en la mayoría de filas.")
@@ -179,6 +204,7 @@ if pd.to_numeric(df_raw[c_monto], errors='coerce').notna().mean() < 0.5:
 # =============================================================================
 # 3) PREPROCESAMIENTO
 # =============================================================================
+
 def _strip_accents_lower(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -187,7 +213,7 @@ def _strip_accents_lower(s: str) -> str:
 df = df_raw.copy()
 df[c_prov] = df[c_prov].map(_strip_accents_lower)
 
-# Nº de factura normalizado (alfa-numérico, sin símbolos, sin ceros a la izquierda)
+# Nº de factura normalizado
 df[c_num] = (df[c_num].astype(str).str.lower()
              .str.replace(r"[^0-9a-z]", "", regex=True)
              .str.lstrip("0"))
@@ -209,7 +235,6 @@ st.success("Datos preprocesados correctamente.")
 st.subheader("Configuración de duplicados")
 modo = st.selectbox("Tipo de detección", ["Exacto", "Aproximado"], index=0)
 
-# Defaults
 umbral_sim = 90
 tol_monto  = 0.00
 tol_dias   = 0
@@ -218,7 +243,6 @@ bloq_mes   = False
 
 if modo == "Aproximado":
     with st.expander("⚙️ Configuración avanzada"):
-        # Selector simple opcional
         usar_simple = st.toggle("Usar selector simple de coincidencia", value=False)
         if usar_simple:
             nivel_ui = st.select_slider(
@@ -232,10 +256,8 @@ if modo == "Aproximado":
             st.caption(f"Coincidencia mínima equivalente: **{umbral_sim}%**")
         else:
             umbral_sim = st.slider(
-                "Coincidencia mínima del Nº (0–100)",
-                70, 100, 90,
-                help="Porcentaje mínimo de parecido entre números de factura. "
-                     "Más alto = más estricto; más bajo = más flexible."
+                "Coincidencia mínima del Nº (0–100)", 70, 100, 90,
+                help="Porcentaje mínimo de parecido entre números de factura. Más alto = más estricto; más bajo = más flexible."
             )
             nivel = ("Muy estricto" if umbral_sim >= 95 else
                      "Estricto" if umbral_sim >= 90 else
@@ -256,7 +278,7 @@ if modo == "Aproximado":
                 min_value=0, value=0, step=1,
                 help="Acepta diferencias de fecha hasta X días. Si hay muchas fechas vacías, usa 0."
             )
-        bloq_prov = st.checkbox("Comparar solo dentro del mismo proveedor", value=True,
+        bloq_prov = st.checkbox(f"Comparar solo dentro del mismo {party_title.lower()}", value=True,
                                 help="Reduce falsos positivos y acelera el análisis.")
         bloq_mes  = st.checkbox("Bloquear por mismo mes de emisión", value=False,
                                 help="Acelera en archivos grandes (más estricto).")
@@ -268,8 +290,9 @@ if modo == "Aproximado":
 def detect_exact(df: pd.DataFrame, c_num: str, c_prov: str, c_monto: str, c_fecha: str):
     mask = df.duplicated(subset=[c_num, c_prov, c_monto], keep=False)
     out = df.loc[mask].copy()
-    out["_regla"] = "Exacto (num+prov+monto)"
+    out["_regla"] = "Exacto (num+contraparte+monto)"
     return out.sort_values([c_prov, c_num, c_monto, c_fecha], na_position="last")
+
 
 def _pairwise(sg: pd.DataFrame, results: list, c_num: str, c_fecha: str, c_monto: str,
               sim_thr: int, tol_monto: float, tol_dias: int):
@@ -279,19 +302,17 @@ def _pairwise(sg: pd.DataFrame, results: list, c_num: str, c_fecha: str, c_monto
         num_i, fec_i, mon_i, id_i = rows[i]
         for j in range(i+1, n):
             num_j, fec_j, mon_j, id_j = rows[j]
-            # Tolerancia de monto
             if not (pd.notna(mon_i) and pd.notna(mon_j)):
                 continue
             if abs(mon_i - mon_j) > tol_monto:
                 continue
-            # Tolerancia de fecha (solo aplica si ambas existen)
             if tol_dias > 0 and pd.notna(fec_i) and pd.notna(fec_j):
                 if abs((fec_i - fec_j).days) > tol_dias:
                     continue
-            # Similitud de Nº
             sim = fuzz.ratio(str(num_i), str(num_j))
             if sim >= sim_thr:
                 results.append([id_i, id_j, sim])
+
 
 @st.cache_data(show_spinner=False)
 def detect_approx(df: pd.DataFrame,
@@ -308,7 +329,7 @@ def detect_approx(df: pd.DataFrame,
     if bloquear_por_proveedor:
         groups = [g for _, g in work.groupby(c_prov)]
 
-    results = []  # (id1, id2, sim)
+    results = []  # pares (id1, id2, sim)
     for g in groups:
         if bloquear_por_mes and g[c_fecha].notna().any():
             subgroups = [sg for _, sg in g.groupby(g[c_fecha].dt.to_period("M"))]
@@ -328,7 +349,6 @@ def detect_approx(df: pd.DataFrame,
     if not results:
         return pd.DataFrame(columns=df.columns.tolist() + ["_match_id", "_sim", "_regla"])
 
-    # ⬇️ FIX: conservar _sim al pivotear
     pairs = pd.DataFrame(results, columns=["_id1", "_id2", "_sim"])
     pairs_long = pairs.melt(id_vars=["_sim"], value_vars=["_id1", "_id2"],
                             var_name="side", value_name="_rowid")
@@ -363,7 +383,7 @@ if df_dups.empty:
     st.info("No se encontraron duplicados con las reglas actuales.")
 else:
     prods = sorted(df[c_prov].dropna().unique().tolist())
-    f_prov = st.multiselect("Proveedor", options=prods, default=prods)
+    f_prov = st.multiselect(party_title, options=prods, default=prods)  # dinámico
     vmin = float(np.nanmin(df[c_monto].values)) if df[c_monto].notna().any() else 0.0
     vmax = float(np.nanmax(df[c_monto].values)) if df[c_monto].notna().any() else 1.0
     f_min, f_max = st.slider("Rango de monto", vmin, vmax, (vmin, vmax))
@@ -393,13 +413,15 @@ st.subheader("Visualizaciones")
 if not df_dups.empty:
     prov_agg = df_dups.groupby(c_prov, dropna=False)[c_monto].sum().reset_index()
     if _HAS_PLOTLY:
-        fig1 = px.bar(prov_agg, x=c_prov, y=c_monto, title="Monto duplicado por proveedor")
+        fig1 = px.bar(prov_agg, x=c_prov, y=c_monto, title=f"Monto duplicado por {party_label}")
         st.plotly_chart(fig1, use_container_width=True)
     else:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
         ax.bar(prov_agg[c_prov].astype(str), prov_agg[c_monto])
-        ax.set_title("Monto duplicado por proveedor"); ax.set_xlabel("Proveedor"); ax.set_ylabel("Monto")
+        ax.set_title(f"Monto duplicado por {party_label}")
+        ax.set_xlabel(party_title)
+        ax.set_ylabel("Monto")
         st.pyplot(fig)
 
     if df_dups[c_fecha].notna().any():
@@ -417,34 +439,41 @@ if not df_dups.empty:
             st.pyplot(fig)
 
 # =============================================================================
-# 9) PRIORIZACIÓN + ALERTAS/CONCLUSIONES/RECOMENDACIONES
+# 9) PRIORIZACIÓN + BLOQUES COLOREADOS
 # =============================================================================
-st.subheader("Priorización de riesgo (simple)")
+st.subheader("Priorización de riesgo")
 if not df_dups.empty:
+    # Frecuencia por contraparte (dinámico)
+    freq_col = f"_freq_{party_label}"
+    df_dups[freq_col] = df_dups.groupby(c_prov)[c_prov].transform("count")
+
+    # Score simple: z-score del monto + frecuencia relativa
     z = (df_dups[c_monto] - df_dups[c_monto].mean()) / (df_dups[c_monto].std(ddof=0) if df_dups[c_monto].std(ddof=0) else 1)
-    df_dups["_freq_proveedor"] = df_dups.groupby(c_prov)[c_prov].transform("count")
-    df_dups["_riesgo"] = z.fillna(0) + (df_dups["_freq_proveedor"] / max(df_dups["_freq_proveedor"].max(), 1))
+    df_dups["_riesgo"] = z.fillna(0) + (df_dups[freq_col] / max(df_dups[freq_col].max(), 1))
+
     topn = st.slider("Mostrar Top-N por riesgo", 5, min(50, max(5, len(df_dups))), 10)
     st.dataframe(df_dups.sort_values("_riesgo", ascending=False).head(topn), use_container_width=True)
 
-# ── Alertas / Conclusiones / Recomendaciones ─────────────────────────────────
-st.subheader("Alertas, conclusiones y recomendaciones")
+# ── Alertas / Conclusiones / Recomendaciones (colores) ───────────────────────
 
-def construir_alertas_conclusiones(df, df_dups):
+def _bullets(items, vacio="• Sin elementos."):
+    return "\n".join(f"• {it}" for it in items) if items else vacio
+
+
+def construir_alertas_conclusiones(df, df_dups, party_label: str, party_plural: str):
     alerts, concl, recs = [], [], []
     N, D = len(df), len(df_dups)
     porc = (D / N * 100) if N else 0.0
     monto_total = float(df[c_monto].sum()) if N else 0.0
-    monto_dup = float(df_dups[c_monto].sum()) if D else 0.0
+    monto_dup_l = float(df_dups[c_monto].sum()) if D else 0.0
 
-    # SIN DUPLICADOS
     if D == 0:
         concl.append("No se detectaron posibles duplicados con las reglas actuales.")
         recs.extend([
-            "Verifica el mapeo de columnas (Nº, Proveedor, Fecha, Monto) y, si aplica, combina campos.",
-            "Prueba bajar la coincidencia mínima o subir las tolerancias de monto/fecha.",
+            "Verifica el mapeo de columnas (Nº, Contraparte, Fecha, Monto) y, si aplica, combina campos.",
+            "Ajusta la coincidencia mínima o las tolerancias de monto/fecha si sospechas subdetección.",
             "Amplía el filtro de 'Rango de monto' y revisa si hay múltiples monedas.",
-            "Ejecuta en 'Aproximado' si hoy estás en 'Exacto'."
+            "Prueba el modo 'Aproximado' si estás en 'Exacto'."
         ])
         return alerts, concl, recs
 
@@ -453,66 +482,50 @@ def construir_alertas_conclusiones(df, df_dups):
         alerts.append(f"Tasa de duplicados elevada: {porc:.2f}% (≥10%).")
     elif porc >= 3:
         alerts.append(f"Tasa de duplicados moderada: {porc:.2f}% (≥3%).")
-
-    if monto_total and (monto_dup / monto_total) >= 0.02:
+    if monto_total and (monto_dup_l / monto_total) >= 0.02:
         alerts.append("El monto duplicado supera el 2% del total facturado.")
 
     prov_agg = df_dups.groupby(c_prov)[c_monto].sum().sort_values(ascending=False)
-    if not prov_agg.empty and monto_dup:
+    if not prov_agg.empty and monto_dup_l:
         top_prov, top_amt = prov_agg.index[0], float(prov_agg.iloc[0])
-        share = top_amt / monto_dup
+        share = top_amt / monto_dup_l
         if share >= 0.5:
             alerts.append(f"Concentración: {top_prov} acumula {share:.0%} del monto duplicado.")
 
     sizes = df_dups.groupby([c_prov, c_num]).size()
     grupos_3p = sizes[sizes >= 3]
     if not grupos_3p.empty:
-        alerts.append(f"Se detectaron {len(grupos_3p)} grupo(s) de tres o más facturas con el mismo Nº y proveedor (máx: {int(grupos_3p.max())}).")
+        alerts.append(f"Se detectaron {len(grupos_3p)} grupo(s) de ≥3 facturas con mismo Nº y {party_label}.")
 
     if (df_dups.groupby(c_num)[c_prov].nunique() >= 2).any():
-        alerts.append("Hay números de factura repetidos en distintos proveedores (posible cruce o error de alta).")
-
-    if c_fecha in df_dups and df_dups[c_fecha].notna().any():
-        recientes = df_dups[df_dups[c_fecha] >= (pd.Timestamp.today().normalize() - pd.Timedelta(days=30))]
-        if len(recientes) > 0:
-            alerts.append(f"{len(recientes)} duplicado(s) en los últimos 30 días.")
-
-    if c_fecha in df and df[c_fecha].isna().mean() > 0.2:
-        alerts.append("Más del 20% de las facturas no tiene fecha; esto puede ocultar duplicados.")
+        alerts.append(f"Hay números de factura repetidos en distintos {party_plural} (posible cruce o error de alta).")
 
     # Conclusiones
-    concl.append(f"Se identificaron {D:,} posibles duplicados ({porc:.2f}%) por un total de $ {monto_dup:,.2f}.")
+    concl.append(f"Se identificaron {D:,} posibles duplicados ({porc:.2f}%) por un total de $ {monto_dup_l:,.2f}.")
     if alerts:
         concl.append("Los hallazgos muestran señales de riesgo que requieren revisión prioritaria.")
 
-    # Recomendaciones
+    # Recomendaciones (dinámicas a la contraparte)
     recs.extend([
-        "Revisar primero el Top-N por riesgo (monto alto + proveedores con más repeticiones).",
-        "Configurar en el ERP la validación de duplicados por Nº + proveedor + monto + fecha (con tolerancias).",
-        "Mantener limpio el maestro de proveedores (homónimos, RUC/NIT duplicados).",
+        f"Revisar primero el Top-N por riesgo (monto alto + {party_plural} con más repeticiones).",
+        f"Configurar en el ERP la validación de duplicados por Nº + {party_label} + monto + fecha (con tolerancias).",
+        f"Mantener limpio el maestro de {party_plural} (homónimos, identificadores duplicados).",
         "Bloquear pagos hasta aclaración cuando el grupo (_match_id) tenga ≥3 facturas.",
     ])
     return alerts, concl, recs
 
-alerts, concl, recs = construir_alertas_conclusiones(df, df_dups)
+alerts, concl, recs = construir_alertas_conclusiones(df, df_dups, party_label, party_plural)
 
-if alerts:
-    st.warning("**Alertas:**")
-    for a in alerts: st.write("• " + a)
-else:
-    st.success("Sin alertas destacables con los parámetros actuales.")
-
-st.markdown("**Conclusiones**")
-for c in concl: st.write("• " + c)
-
-st.markdown("**Recomendaciones**")
-for r in recs: st.write("• " + r)
+# 🔴 rojo / 🔵 azul / 🟢 verde
+st.error(f"🚨 **Alertas**\n\n{_bullets(alerts, '• Sin alertas destacables con los parámetros actuales.')}" )  # rojo
+st.info( f"🧠 **Conclusiones**\n\n{_bullets(concl)}" )                                                              # azul
+st.success(f"🛠️ **Recomendaciones**\n\n{_bullets(recs)}" )                                                             # verde
 
 # =============================================================================
-# 10) EXPORTACIÓN
+# 10) EXPORTACIÓN (sin hoja 'Parametros') con nombre dinámico de hoja de resumen
 # =============================================================================
 st.subheader("Exportar resultados")
-if st.button("Descargar Excel (duplicados + resumen + parámetros)"):
+if st.button("Descargar Excel (duplicados + resumen)"):
     if df_dups.empty:
         st.warning("No hay duplicados para exportar.")
     else:
@@ -523,17 +536,8 @@ if st.button("Descargar Excel (duplicados + resumen + parámetros)"):
                 total_monto=(c_monto, "sum"),
                 n_items=(c_prov, "size"),
             ).reset_index().sort_values("total_monto", ascending=False)
-            prov_res.to_excel(writer, index=False, sheet_name="Resumen_Proveedor")
-            params = {
-                "modo": modo,
-                "coincidencia_min": umbral_sim if modo == "Aproximado" else None,
-                "tol_monto":  tol_monto if modo == "Aproximado" else None,
-                "tol_dias":   tol_dias  if modo == "Aproximado" else None,
-                "bloq_prov":  bloq_prov if modo == "Aproximado" else None,
-                "bloq_mes":   bloq_mes  if modo == "Aproximado" else None,
-                "cols": {"num": c_num, "prov": c_prov, "fecha": c_fecha, "monto": c_monto},
-            }
-            pd.DataFrame([params]).to_excel(writer, index=False, sheet_name="Parametros")
+            sheet_name = f"Resumen_{party_title}"  # "Resumen_Cliente"|"Resumen_Proveedor"|"Resumen_Tercero"
+            prov_res.to_excel(writer, index=False, sheet_name=sheet_name)
         st.download_button(
             label="Descargar Excel",
             data=output.getvalue(),
@@ -549,7 +553,7 @@ st.info(
 **Buenas prácticas**  
 • Verifica moneda antes de usar tolerancia de monto.  
 • Sube la *coincidencia mínima* si hay falsos positivos; bájala si quieres capturar más sospechosos.  
-• Bloquear por proveedor (y por mes) acelera en archivos grandes.  
+• Bloquear por contraparte (y por mes) acelera en archivos grandes.  
 • Exporta el Excel para anexar a tus papeles de trabajo.
 """
 )
