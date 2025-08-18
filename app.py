@@ -359,8 +359,6 @@ else:
 # =============================================================================
 # 6) FILTROS
 # =============================================================================
-df['c_tipo'] = df['c_tipo'].apply(lambda x: 'Tercero' if x not in ['Proveedor', 'Cliente'] else x)
-
 # Si la columna 'c_tipo' no existe, crearla
 if 'c_tipo' not in df_raw.columns:
     if 'tipo_entidad' in df_raw.columns:
@@ -373,15 +371,16 @@ st.subheader("Filtros de análisis")
 if df_dups.empty:
     st.info("No se encontraron duplicados con las reglas actuales.")
 else:
-    # Asegúrate de que la columna c_tipo está correctamente filtrando
-    opciones_party = sorted(df["c_tipo"].dropna().unique().tolist())  # Aquí "c_tipo" es la columna de tipo
+    # Revisar si los filtros están correctamente definidos
+    opciones_party = sorted(df["c_tipo"].dropna().unique().tolist())
     f_party = st.multiselect("Selecciona Proveedores, Clientes y/o Terceros", options=opciones_party, default=opciones_party)
 
-    # Filtros adicionales
+    # Ajustar el rango de monto
     vmin = float(np.nanmin(df[c_monto].values)) if df[c_monto].notna().any() else 0.0
     vmax = float(np.nanmax(df[c_monto].values)) if df[c_monto].notna().any() else 1.0
     f_min, f_max = st.slider("Rango de monto", vmin, vmax, (vmin, vmax))
 
+    # Ajustar el rango de fechas
     if df[c_fecha].notna().any():
         f_fecha_min, f_fecha_max = st.slider(
             "Rango de fechas",
@@ -389,15 +388,15 @@ else:
             max_value=df[c_fecha].max().date(),
             value=(df[c_fecha].min().date(), df[c_fecha].max().date())
         )
-        # Filtrar usando 'c_tipo' correctamente
+        # Filtrar por c_tipo, monto y fecha
         df_dups = df_dups[
-            (df_dups["c_tipo"].isin(f_party)) &  # Filtra por el tipo seleccionado
+            (df_dups["c_tipo"].isin(f_party)) & 
             (df_dups[c_monto].between(f_min, f_max)) &
             (df_dups[c_fecha].dt.date.between(f_fecha_min, f_fecha_max))
         ]
     else:
         df_dups = df_dups[
-            (df_dups["c_tipo"].isin(f_party)) &  # Filtra por el tipo seleccionado
+            (df_dups["c_tipo"].isin(f_party)) & 
             df_dups[c_monto].between(f_min, f_max)
         ]
    
@@ -608,6 +607,7 @@ st.info(
 • Exporta el Excel para anexar a tus papeles de trabajo.
 """
 )
+
 
 
 
