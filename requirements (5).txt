@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+openpyxl
+xlsxwriter
+rapidfuzz
+plotly
+matplotlib
+kaleido
+PyPDF2
