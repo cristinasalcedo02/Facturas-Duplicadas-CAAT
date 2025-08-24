@@ -54,9 +54,25 @@ st.title("Control Avanzado de Facturas: Duplicados y Análisis de Riesgo")
 
 st.subheader("Guía rápida")
 st.markdown("""
-**¿Por qué importa?** Las facturas duplicadas generan pagos repetidos, errores contables y pérdida de control.
-**Cómo usar:** 1) Sube el archivo → 2) Confirma o edita mapeo → 3) Elige 'Exacto' o 'Aproximado' → 4) Revisa KPIs, tabla, gráficas → 5) Exporta a Excel.
-**Tip:** Si no detecta nada, baja la coincidencia (Aproximado) y/o amplía tolerancias.
+**Objetivo:**  
+Esta aplicación ayuda a detectar facturas duplicadas (exactas o aproximadas) y a generar un informe con KPIs, gráficas y hallazgos para auditoría o control interno.
+
+**¿Por qué importa?**  
+Las facturas duplicadas generan pagos repetidos, errores contables y pérdida de control.
+
+**Cómo usar:**  
+1. Sube el archivo  
+2. Confirma o edita mapeo  
+3. Elige 'Exacto' o 'Aproximado'  
+4. Revisa KPIs, tabla, gráficas  
+5. Exporta a Excel  
+6. Si no detecta nada, baja la coincidencia (Aproximado) y/o amplía tolerancias.
+
+**Recomendaciones:**  
+- Verifica que las columnas de tu archivo estén bien mapeadas (Nº, Parte, Fecha, Monto).  
+- Usa primero la detección **Exacta** y luego prueba con la **Aproximada** si sospechas errores tipográficos.  
+- Aplica filtros por proveedor o fecha para enfocar el análisis.  
+- Exporta siempre los resultados a Excel y adjúntalos a tus papeles de trabajo.
 """)
 
 # ──────────────────────────────────────────────────────────────────────────────
