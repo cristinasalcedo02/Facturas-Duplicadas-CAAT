@@ -8,3 +8,5 @@ xlsxwriter>=3.1
 rapidfuzz>=3.6
 thefuzz>=0.22
 python-Levenshtein>=0.21
+kaleido>=0.2.1
+PyPDF2>=3.0.0
